@@ -18,7 +18,22 @@ class RNADataset(Dataset):
         # Nucleotide to index mapping
         self.nt_to_idx = {"A": 0, "U": 1, "G": 2, "C": 3, "N": 4}
         # Structure to index mapping
-        self.struct_to_idx = {".": 0, "(": 1, ")": 2}
+        self.struct_to_idx = {
+            ".": 0,  # unpaired
+            "(": 1,  # opening bracket
+            ")": 2,  # closing bracket
+            "[": 1,  # alternate opening bracket
+            "]": 2,  # alternate closing bracket
+            "{": 1,  # alternate opening bracket
+            "}": 2,  # alternate closing bracket
+            "<": 1,  # alternate opening bracket
+            ">": 2   # alternate closing bracket
+        }
+        
+        for i in range(26):
+            self.struct_to_idx[chr(ord("A")+i)] = 1 # Alternate opening bracket
+            self.struct_to_idx[chr(ord("a")+i)] = 2 # Alternate close bracket
+        
 
     def __len__(self):
         return len(self.sequences)
