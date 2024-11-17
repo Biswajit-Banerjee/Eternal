@@ -11,28 +11,39 @@ import os
 from pathlib import Path
 
 class RNADataset(Dataset):
-    def __init__(self, sequences, structures):
+    def __init__(self, sequences, structures, max_length=5000):
         self.sequences = sequences
         self.structures = structures
+        self.max_length = max_length
 
         # Nucleotide to index mapping
         self.nt_to_idx = {"A": 0, "U": 1, "G": 2, "C": 3, "N": 4}
-        # Structure to index mapping
-        self.struct_to_idx = {
-            ".": 0,  # unpaired
-            "(": 1,  # opening bracket
-            ")": 2,  # closing bracket
-            "[": 1,  # alternate opening bracket
-            "]": 2,  # alternate closing bracket
-            "{": 1,  # alternate opening bracket
-            "}": 2,  # alternate closing bracket
-            "<": 1,  # alternate opening bracket
-            ">": 2   # alternate closing bracket
-        }
         
+        # Define bracket pairs
+        self.openings = list("({[<") + [chr(ord("A") + i) for i in range(26)]
+        self.closing = list(">]})") + [chr(ord("a") + i) for i in range(26)]
+        
+        # Create mapping for structure symbols
+        self.struct_to_idx = {".": 0}  # Start with unpaired
+        
+        # Add mappings for basic brackets
+        bracket_pairs = list(zip("({[<", ">]})"))
+        for i, (open_b, close_b) in enumerate(bracket_pairs, start=1):
+            self.struct_to_idx[open_b] = 2*i - 1    # Odd numbers for opening
+            self.struct_to_idx[close_b] = 2*i       # Even numbers for closing
+            
+        # Add mappings for letter-based brackets (A-Z, a-z)
         for i in range(26):
-            self.struct_to_idx[chr(ord("A")+i)] = 1 # Alternate opening bracket
-            self.struct_to_idx[chr(ord("a")+i)] = 2 # Alternate close bracket
+            opening = chr(ord("A") + i)
+            closing = chr(ord("a") + i)
+            idx_base = len(bracket_pairs) * 2 + 1   # Start after basic brackets
+            self.struct_to_idx[opening] = idx_base + 2*i     # Maintain odd/even pattern
+            self.struct_to_idx[closing] = idx_base + 2*i + 1
+            
+        self.num_struct_labels = len(self.struct_to_idx)
+        
+        # Create reverse mapping for debugging and visualization
+        self.idx_to_struct = {v: k for k, v in self.struct_to_idx.items()}
         
 
     def __len__(self):
@@ -176,45 +187,64 @@ class RNADataset(Dataset):
         )
 
     def encode_sequence(self, seq):
-        # Convert sequence to indices
-        seq_idx = [self.nt_to_idx.get(nt, self.nt_to_idx["N"]) for nt in seq]
-        # One-hot encode
-        one_hot = np.zeros((len(seq), len(self.nt_to_idx)))
-        one_hot[np.arange(len(seq)), seq_idx] = 1
+        # Get sequence length
+        seq_len = len(seq)
+        
+        # Create zero-padded one-hot matrix
+        one_hot = np.zeros((self.max_length, len(self.nt_to_idx)))
+        
+        # Only encode actual sequence positions
+        for i, nt in enumerate(seq):
+            if i < self.max_length:
+                one_hot[i, self.nt_to_idx.get(nt, self.nt_to_idx["N"])] = 1
+                
         return torch.FloatTensor(one_hot)
-
+    
     def encode_structure(self, struct):
-        # Convert structure to indices
-        struct_idx = [self.struct_to_idx[s] for s in struct]
-        return torch.LongTensor(struct_idx)
+        # Initialize with -100 padding
+        struct_idx = torch.full((self.max_length,), -100, dtype=torch.long)
+        
+        # Fill in actual structure indices up to max_length
+        seq_len = min(len(struct), self.max_length)
+        for i in range(seq_len):
+            struct_idx[i] = self.struct_to_idx[struct[i]]
+                
+        return struct_idx
 
     def __getitem__(self, idx):
         seq = self.sequences[idx]
         struct = self.structures[idx]
-
-        # Get encodings
+        
+        # Get original length
+        orig_len = len(seq)
+        
+        # Get encodings (they handle padding internally)
         seq_encoding = self.encode_sequence(seq)
         struct_encoding = self.encode_structure(struct)
 
-        # Create base pair matrix (for advanced training)
-        bp_matrix = self.create_bp_matrix(struct)
+        # Create attention mask (1 for real tokens, 0 for padding)
+        attention_mask = torch.zeros(self.max_length)
+        attention_mask[:min(orig_len, self.max_length)] = 1
 
         return {
             "sequence": seq_encoding,
             "structure": struct_encoding,
-            "bp_matrix": bp_matrix,
-            "length": len(seq),
+            "attention_mask": attention_mask,
+            "length": min(orig_len, self.max_length),
+            "raw_sequence": seq,
+            "raw_structure": struct
         }
 
     def create_bp_matrix(self, struct):
-        n = len(struct)
-        matrix = np.zeros((n, n))
+        n = min(len(struct), self.max_length)
+        matrix = np.zeros((self.max_length, self.max_length))
         stack = []
 
-        for i, s in enumerate(struct):
-            if s == "(":
+        # Only process up to max_length
+        for i, s in enumerate(struct[:n]):
+            if s in self.openings:
                 stack.append(i)
-            elif s == ")" and stack:
+            elif s in self.closing and stack:
                 j = stack.pop()
                 matrix[i][j] = matrix[j][i] = 1
 
