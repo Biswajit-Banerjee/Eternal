@@ -1,173 +1,259 @@
 import torch
 import torch.nn as nn
 import math
+from torch.utils.checkpoint import checkpoint
 
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+    def __init__(self, d_model: int, max_seq_length: int = 5000, dropout=0.1):
         super().__init__()
-        position = torch.arange(max_len).unsqueeze(1)
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_seq_length).unsqueeze(1)
         div_term = torch.exp(
             torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model)
         )
-        pe = torch.zeros(max_len, 1, d_model)
-        pe[:, 0, 0::2] = torch.sin(position * div_term)
-        pe[:, 0, 1::2] = torch.cos(position * div_term)
+
+        pe = torch.zeros(1, max_seq_length, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+
         self.register_buffer("pe", pe)
 
     def forward(self, x):
-        return x + self.pe[: x.size(0)]
+        x = x + self.pe[:, : x.size(1)]
+        return self.dropout(x)
 
 
-class RNATransformer(nn.Module):
+class LinearAttention(nn.Module):
+    def __init__(self, hidden_size, num_heads=8, dropout=0.1, chunk_size=512):
+        super().__init__()
+        assert hidden_size % num_heads == 0
+
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        self.chunk_size = chunk_size
+
+        self.qkv = nn.Linear(hidden_size, 3 * hidden_size)
+        self.proj = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def chunk_compute_attention(self, q, k, v, chunk_size):
+        batch_size, num_heads, seq_len, head_dim = q.shape
+        chunks_q = q.split(chunk_size, dim=2)
+        chunks_k = k.split(chunk_size, dim=2)
+        chunks_v = v.split(chunk_size, dim=2)
+
+        outputs = []
+        for q_chunk in chunks_q:
+            chunk_outputs = []
+            for k_chunk, v_chunk in zip(chunks_k, chunks_v):
+                # Compute attention scores for current chunks
+                scores = torch.matmul(q_chunk, k_chunk.transpose(-2, -1)) / math.sqrt(
+                    head_dim
+                )
+                attn = torch.softmax(scores, dim=-1)
+                chunk_output = torch.matmul(attn, v_chunk)
+                chunk_outputs.append(chunk_output)
+            # Combine chunk outputs
+            output = sum(chunk_outputs) / len(chunk_outputs)
+            outputs.append(output)
+        return torch.cat(outputs, dim=2)
+
+    def forward(self, x):
+        batch_size, seq_len, hidden_size = x.shape
+
+        # Generate Q, K, V with shape [batch, seq_len, 3 * hidden]
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Compute attention in chunks
+        if seq_len > self.chunk_size:
+            attn_output = self.chunk_compute_attention(q, k, v, self.chunk_size)
+        else:
+            scaling = float(self.head_dim) ** -0.5
+            attn = (q @ k.transpose(-2, -1)) * scaling
+            attn = torch.softmax(attn, dim=-1)
+            attn_output = attn @ v
+
+        # Reshape and project output
+        attn_output = attn_output.transpose(1, 2).reshape(
+            batch_size, seq_len, hidden_size
+        )
+        return self.dropout(self.proj(attn_output))
+
+
+class EnhancedRnaEncoder(nn.Module):
     def __init__(
         self,
-        num_nucleotides=5,
-        num_structure_labels=3,
-        d_model=128,
-        nhead=8,
-        num_encoder_layers=6,
-        num_decoder_layers=6,
-        dim_feedforward=512,
+        input_size=5,
+        hidden_size=64,
+        num_layers=2,
+        num_heads=8,
         dropout=0.1,
+        chunk_size=512,
     ):
         super().__init__()
 
-        # Embedding layers
-        self.src_embed = nn.Linear(num_nucleotides, d_model)
-        self.struct_embed = nn.Embedding(num_structure_labels, d_model)
+        self.input_proj = nn.Linear(input_size, hidden_size)
+        self.pos_encoding = PositionalEncoding(hidden_size, dropout=dropout)
+        self.layer_norm = nn.LayerNorm(hidden_size)
 
-        # Positional encoding
-        self.pos_encoder = PositionalEncoding(d_model)
-
-        # Transformer
-        self.transformer = nn.Transformer(
-            d_model=d_model,
-            nhead=nhead,
-            num_encoder_layers=num_encoder_layers,
-            num_decoder_layers=num_decoder_layers,
-            dim_feedforward=dim_feedforward,
-            dropout=dropout,
-            batch_first=True,
+        self.layers = nn.ModuleList(
+            [
+                nn.ModuleList(
+                    [
+                        LinearAttention(hidden_size, num_heads, dropout, chunk_size),
+                        nn.LayerNorm(hidden_size),
+                        nn.Sequential(
+                            nn.Linear(hidden_size, hidden_size * 2),  # Reduced from 4x
+                            nn.ReLU(),
+                            nn.Dropout(dropout),
+                            nn.Linear(hidden_size * 2, hidden_size),
+                            nn.Dropout(dropout),
+                        ),
+                        nn.LayerNorm(hidden_size),
+                    ]
+                )
+                for _ in range(num_layers)
+            ]
         )
 
-        # Output layer
-        self.output_layer = nn.Linear(d_model, num_structure_labels)
+    def forward(self, x):
+        x = x.float()
 
-        # Loss function that ignores padding
-        self.criterion = nn.CrossEntropyLoss(ignore_index=-1)
+        # Project input and add positional encoding
+        x = checkpoint(self.input_proj, x)
+        x = self.pos_encoding(x)
+        x = self.layer_norm(x)
 
-    def create_mask(self, src_len, tgt_len, device):
-        # Create source padding mask (not needed for this case as we use full sequences)
-        src_mask = torch.zeros((src_len, src_len), device=device).bool()
+        # Process through attention layers with gradient checkpointing
+        for attn, norm1, ffn, norm2 in self.layers:
+            # Self-attention block with chunked computation
+            attn_out = checkpoint(attn, x)
+            x = norm1(x + attn_out)
 
-        # Create target mask (traditional transformer subsequent mask)
-        tgt_mask = torch.triu(
-            torch.ones((tgt_len, tgt_len), device=device) * float("-inf"), diagonal=1
-        )
+            # Feed-forward block
+            ffn_out = checkpoint(ffn, x)
+            x = norm2(x + ffn_out)
 
-        return src_mask, tgt_mask
+        return x
 
-    def forward(self, src, tgt=None, teacher_forcing_ratio=0.5):
-        device = src.device
-        batch_size, seq_len, _ = src.shape
 
-        # Embed input sequence
-        src_embedded = self.src_embed(src)
-        src_embedded = self.pos_encoder(src_embedded)
+class EnhancedRnaDecoder(nn.Module):
+    def __init__(
+        self,
+        hidden_size=64,
+        output_size=61,
+        num_layers=2,
+        num_heads=8,
+        dropout=0.1,
+        chunk_size=512,
+    ):
+        super().__init__()
 
-        if self.training and tgt is not None:
-            # Teacher forcing
-            tgt_embedded = self.struct_embed(tgt)
-            tgt_embedded = self.pos_encoder(tgt_embedded)
+        self.layers = nn.ModuleList()
+        current_size = hidden_size
 
-            # Create masks
-            src_mask, tgt_mask = self.create_mask(seq_len, seq_len, device)
-
-            # Run through transformer
-            output = self.transformer(
-                src_embedded, tgt_embedded, src_mask=src_mask, tgt_mask=tgt_mask
+        # Add attention layers except for the final output layer
+        for i in range(num_layers - 1):
+            self.layers.append(
+                nn.ModuleList(
+                    [
+                        LinearAttention(current_size, num_heads, dropout, chunk_size),
+                        nn.LayerNorm(current_size),
+                        nn.Sequential(
+                            nn.Linear(
+                                current_size, current_size * 2
+                            ),  # Reduced from 4x
+                            nn.ReLU(),
+                            nn.Dropout(dropout),
+                            nn.Linear(current_size * 2, current_size),
+                            nn.Dropout(dropout),
+                        ),
+                        nn.LayerNorm(current_size),
+                    ]
+                )
             )
 
-            # Project to structure labels
-            output = self.output_layer(output)
+        # Final output layer
+        self.layers.append(nn.Sequential(nn.Linear(current_size, output_size)))
 
-        else:
-            # Inference mode - generate structure auto-regressively
-            output = torch.zeros(batch_size, seq_len, dtype=torch.long, device=device)
+    def forward(self, x):
+        # Process through attention layers with gradient checkpointing
+        for i, layer in enumerate(self.layers[:-1]):
+            attn, norm1, ffn, norm2 = layer
 
-            for i in range(seq_len):
-                tgt = output[:, : i + 1]
-                tgt_embedded = self.struct_embed(tgt)
-                tgt_embedded = self.pos_encoder(tgt_embedded)
+            # Self-attention block
+            attn_out = checkpoint(attn, x)
+            x = norm1(x + attn_out)
 
-                # Create masks
-                src_mask, tgt_mask = self.create_mask(seq_len, i + 1, device)
+            # Feed-forward block
+            ffn_out = checkpoint(ffn, x)
+            x = norm2(x + ffn_out)
 
-                # Generate next token
-                out = self.transformer(
-                    src_embedded, tgt_embedded, src_mask=src_mask, tgt_mask=tgt_mask
-                )
-
-                next_token = self.output_layer(out[:, -1:])
-                next_token = next_token.argmax(dim=-1)
-
-                output[:, i] = next_token.squeeze()
-
-        return output
-
-    def calculate_loss(self, predictions, targets):
-        # Reshape predictions to (batch_size * seq_len, num_classes)
-        predictions = predictions.view(-1, predictions.size(-1))
-        targets = targets.view(-1)
-
-        return self.criterion(predictions, targets)
+        # Final output layer
+        x = self.layers[-1](x)
+        return x
 
 
-class RNAStructurePredictor:
-    def __init__(self, model, device="cuda" if torch.cuda.is_available() else "cpu"):
-        self.model = model
-        self.device = device
-        self.model.to(device)
+class EnhancedRNAPredictor(nn.Module):
+    def __init__(
+        self,
+        input_size=5,
+        hidden_size=64,
+        output_size=61,
+        num_layers=2,
+        num_heads=8,
+        dropout=0.1,
+        chunk_size=512,
+        max_seq_length=5000,
+    ):
+        super().__init__()
 
-    def train_step(self, batch, optimizer):
-        self.model.train()
-        optimizer.zero_grad()
+        self.max_seq_length = max_seq_length
+        self.chunk_size = chunk_size
 
-        # Move batch to device
-        src = batch["sequence"].to(self.device)
-        tgt = batch["structure"].to(self.device)
+        self.encoder = EnhancedRnaEncoder(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            chunk_size=chunk_size,
+        )
 
-        # Forward pass
-        output = self.model(src, tgt)
+        self.decoder = EnhancedRnaDecoder(
+            hidden_size=hidden_size,
+            output_size=output_size,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            dropout=dropout,
+            chunk_size=chunk_size,
+        )
 
-        # Calculate loss
-        loss = self.model.calculate_loss(output, tgt)
+        # Initialize weights
+        self.apply(self._init_weights)
 
-        # Backward pass
-        loss.backward()
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
-        # Update weights
-        optimizer.step()
+    def forward(self, x):
+        # Check sequence length
+        if x.size(1) > self.max_seq_length:
+            raise ValueError(
+                f"Input sequence length {x.size(1)} exceeds maximum allowed length {self.max_seq_length}"
+            )
 
-        return loss.item()
+        if self.training:
+            self.train()
 
-    def validate_step(self, batch):
-        self.model.eval()
-        with torch.no_grad():
-            src = batch["sequence"].to(self.device)
-            tgt = batch["structure"].to(self.device)
-
-            output = self.model(src)
-            loss = self.model.calculate_loss(output, tgt)
-
-            predictions = output.argmax(dim=-1)
-
-            return loss.item(), predictions
-
-    def predict(self, sequence):
-        self.model.eval()
-        with torch.no_grad():
-            src = sequence.to(self.device)
-            output = self.model(src)
-            return output.argmax(dim=-1)
+        latent = self.encoder(x)
+        logits = self.decoder(latent)
+        return logits

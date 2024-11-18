@@ -81,9 +81,9 @@ def inference(model, test_loader, device):
         'per_class': per_class_metrics
     }
 
-def visualize_predictions(model, test_loader, device, num_examples=5):
+def visualize_predictions(model, test_loader, device, num_examples=1, total_examples=5):
     model.eval()
-    
+    total = 0
     print(f"\nVisualizing {num_examples} example predictions:")
     with torch.no_grad():
         for batch in test_loader:
@@ -91,6 +91,7 @@ def visualize_predictions(model, test_loader, device, num_examples=5):
             structures = batch['structure'].to(device)
             lengths = batch['length'].to(device)
             true_structures = batch['raw_structure']
+            true_sequence = batch['raw_sequence']
             
             # Forward pass
             logits = model(sequences)
@@ -112,13 +113,14 @@ def visualize_predictions(model, test_loader, device, num_examples=5):
                 true_struct = true_structures[i]
                 
                 # Convert one-hot sequence back to string
-                seq = ''.join([
-                    'AUGCN'[idx] 
-                    for idx in torch.argmax(sequences[i][:length], dim=1).cpu().numpy()
-                ])
+                seq = true_sequence[i]
                 
-                print("\nExample:")
+                print(f"\nExample {total+1:3}:")
                 print(f"Sequence:  {seq}")
                 print(f"Predicted: {pred_struct}")
                 print(f"Ground Tr: {true_struct}")
+                total += 1
+                
+                if total >= total_examples:
+                    return
             
