@@ -11,7 +11,7 @@ def inference(model, test_loader, device):
     all_preds = []
     all_targets = []
     
-    print("Running inference...")
+    # print("Running inference...")
     with torch.no_grad():
         for batch in tqdm(test_loader):
             sequences = batch['sequence'].to(device)
@@ -59,26 +59,26 @@ def inference(model, test_loader, device):
             'support': support[i]
         }
     
-    print("\nOverall Metrics:")
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"Precision: {precision:.4f}")
-    print(f"Recall: {recall:.4f}")
-    print(f"F1 Score: {f1:.4f}")
+    # print("\nOverall Metrics:")
+    # print(f"Accuracy: {accuracy:.4f}")
+    # print(f"Precision: {precision:.4f}")
+    # print(f"Recall: {recall:.4f}")
+    # print(f"F1 Score: {f1:.4f}")
     
-    print("\nPer-Class Metrics:")
-    for label, metrics in per_class_metrics.items():
-        print(f"\nClass {label}:")
-        print(f"Precision: {metrics['precision']:.4f}")
-        print(f"Recall: {metrics['recall']:.4f}")
-        print(f"F1 Score: {metrics['f1']:.4f}")
-        print(f"Support: {metrics['support']}")
+    # print("\nPer-Class Metrics:")
+    # for label, metrics in per_class_metrics.items():
+    #     print(f"\nClass {label}:")
+    #     print(f"Precision: {metrics['precision']:.4f}")
+    #     print(f"Recall: {metrics['recall']:.4f}")
+    #     print(f"F1 Score: {metrics['f1']:.4f}")
+    #     print(f"Support: {metrics['support']}")
     
     return {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'per_class': per_class_metrics
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1': float(f1),
+        # 'per_class': per_class_metrics
     }
 
 def visualize_predictions(model, test_loader, device, num_examples=1, total_examples=5):
