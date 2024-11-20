@@ -6,14 +6,17 @@ import numpy as np
 from .utils import inference
 from .metrics import MetricsTracker
 
-def train_epoch(model, train_loader, criterion, optimizer, device, test_loader=None):
+def train_epoch(model, train_loader, criterion, optimizer, device, test_loader=None, metrics_tracker=None):
     model.train()
     total_loss = 0
     num_batches = len(train_loader)
 
-    metrics_tracker = MetricsTracker()
-    infer_every = 60
+    if not metrics_tracker:
+        metrics_tracker = MetricsTracker()
+
     
+    infer_every = len(train_loader) // 4
+
     with tqdm(train_loader, desc="Training") as pbar:
         for batch_num, batch in enumerate(pbar):
             
