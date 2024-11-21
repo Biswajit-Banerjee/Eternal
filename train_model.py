@@ -45,9 +45,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Configuration
 batch_size = 28
-num_epochs = 3
+num_epochs = 7
 learning_rate = 0.003
-model_save_dir = Path("models")
 
 # Set up logging and metrics tracking
 timestamp = setup_logging()
@@ -59,9 +58,6 @@ logging.info(f"Batch size: {batch_size}")
 logging.info(f"Number of epochs: {num_epochs}")
 logging.info(f"Learning rate: {learning_rate}")
 logging.info(f"Device: {device}")
-
-# Create model save directory
-model_save_dir.mkdir(parents=True, exist_ok=True)
 
 # Load dataset
 logging.info("Loading datasets...")
@@ -85,10 +81,13 @@ logging.info(f"Train data batches: {len(train_dataset)}")
 # logging.info(f"Validation data batches: {len(val_loader)}")
 logging.info(f"Test data batches: {len(test_dataset)}")
 
+metrics_tracker = MetricsTracker()
+metrics_tracker_epoch = MetricsTracker()
+
 # Initialize model
 logging.info("Initializing model...")
 model = EnhancedRNAPredictor(
-    input_size=5, hidden_size=32, output_size=61, num_layers=3, num_heads=8, dropout=0.1
+    input_size=5, hidden_size=32, output_size=61, num_layers=4, num_heads=8, dropout=0.2
 ).to(device)
 
 # Set up training components
@@ -107,7 +106,7 @@ for epoch in range(num_epochs):
     torch.cuda.empty_cache()
 
     # Train
-    train_loss = train_epoch(model, train_loader, criterion, optimizer, device=device, test_loader=test_loader)
+    train_loss = train_epoch(model, train_loader, criterion, optimizer, device=device, test_loader=test_loader, metrics_tracker=metrics_tracker)
     current_lr = optimizer.param_groups[0]['lr']
     
     # Run inference on test set
@@ -117,21 +116,15 @@ for epoch in range(num_epochs):
     logging.info(f"\nEpoch {epoch+1}/{num_epochs}")
     logging.info(f"Training Loss: {train_loss:.4f}")
     logging.info(f"Learning Rate: {current_lr}")
-    logging.info(f"Test Metrics:")
+    logging.info(f"Training Metrics:")
     logging.info(f"  Accuracy: {test_metrics['accuracy']:.4f}")
     logging.info(f"  Precision: {test_metrics['precision']:.4f}")
     logging.info(f"  Recall: {test_metrics['recall']:.4f}")
     logging.info(f"  F1 Score: {test_metrics['f1']:.4f}")
 
-    # Store metrics
-    # metrics_tracker.update(train_loss, current_lr, test_metrics)
-
     # Update learning rate
     scheduler.step(train_loss)
     save_checkpoint(model, optimizer, epoch)
-
-    # Save final metrics and create visualizations
-    # metrics_tracker.save_metrics()
 
     # save model
     if best_loss > train_loss:
