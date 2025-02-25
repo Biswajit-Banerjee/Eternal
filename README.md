@@ -6,7 +6,9 @@
 
 ## 🌟 Overview
 
-**FoldFormer** is a revolutionary transformer-based approach for RNA secondary structure prediction that treats the problem as a sequence-to-sequence translation task. Using a streamlined encoder-decoder architecture with chunked linear attention, our model achieves competitive results compared to state-of-the-art methods while using significantly fewer parameters (~55K).
+**FoldFormer** is a revolutionary transformer-based approach for RNA secondary structure prediction that treats the problem as a sequence-to-sequence translation task. Using a streamlined encoder-decoder architecture with chunked linear attention, our model achieves competitive results compared to state-of-the-art methods while using significantly fewer parameters (~55K). While generalizing across RNA Families. 
+
+
 
 <p align="center">
   <img src="./BondFormer.png" alt="RNA Structure Visualization" width="600"/>
