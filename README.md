@@ -1,4 +1,4 @@
-# 🧬 Eternal: RNA Secondary Structure Prediction
+# 🧬 FoldFormer: RNA Secondary Structure Prediction
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -6,7 +6,7 @@
 
 ## 🌟 Overview
 
-**EteRNAity** is a revolutionary transformer-based approach for RNA secondary structure prediction that treats the problem as a sequence-to-sequence translation task. Using a streamlined encoder-decoder architecture with chunked linear attention, our model achieves competitive results compared to state-of-the-art methods while using significantly fewer parameters (~55K).
+**FoldFormer** is a revolutionary transformer-based approach for RNA secondary structure prediction that treats the problem as a sequence-to-sequence translation task. Using a streamlined encoder-decoder architecture with chunked linear attention, our model achieves competitive results compared to state-of-the-art methods while using significantly fewer parameters (~55K).
 
 <p align="center">
   <img src="./BondFormer.png" alt="RNA Structure Visualization" width="600"/>
@@ -22,9 +22,9 @@
 
 ## 📊 Performance
 
-EteRNAity demonstrates impressive performance across different RNA families:
+FoldFormer demonstrates impressive performance across different RNA families:
 
-| RNA Family | EteRNAity (ReLU) | MXfold2 (Current SOTA) | UFold |
+| RNA Family | FoldFormer (ours) | MXfold2 (Current SOTA) | UFold |
 |------------|------------------|---------|-------|
 | 5S rRNA    | 0.50             | 0.54    | 0.53  |
 | SRP        | 0.49             | 0.50    | 0.26  |
@@ -35,7 +35,7 @@ EteRNAity demonstrates impressive performance across different RNA families:
 
 ## 🧪 How It Works
 
-EteRNAity translates RNA sequences (A, C, G, U) into dot-bracket notation representing secondary structure:
+FoldFormer translates RNA sequences (A, C, G, U) into dot-bracket notation representing secondary structure:
 
 ```
 Input: GGAAACUUCGGAACC
